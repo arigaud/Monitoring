@@ -5,6 +5,7 @@
 # Tested on: FortiGate 100D / FortiGate 300C (both 5.0.3)
 # Tested on: FortiGate 200B (5.0.6), Fortigate 800C (5.2.2)
 # Tested on: FortiGate 300D (5.2.5)
+# Tested on: FortiGate 100C (4.0.7/4.0.11)
 #
 # Author: Oliver Skibbe (oliskibbe (at) gmail.com)
 # Date: 2015-04-08
@@ -46,6 +47,8 @@
 # Release 1.5.2 (2016-01-28) Claudio Kuenzler (www.claudiokuenzler.com)
 # - cluster bugfix (use dedicated OID to figure out master device)
 # - device name bugfix (use dns name instead of snmp name)
+# Release 1.5.3 (2016-02-17) Alexandre Rigaud (arigaud.prosodie.cap (at) free.fr)
+# - fixed v4 support to cluster sync state 
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -70,7 +73,7 @@ use Pod::Usage;
 use Socket;
 
 my $script = "check_fortigate.pl";
-my $script_version = "1.5.2";
+my $script_version = "1.5.3";
 
 # Parse out the arguments...
 my ($ip, $port, $community, $type, $warn, $crit, $slave, $pri_serial, $reset_file, $mode, $vpnmode,
@@ -121,6 +124,7 @@ my $oid_cpu              = ".1.3.6.1.4.1.12356.101.13.2.1.1.3";    # Location of
 my $oid_net              = ".1.3.6.1.4.1.12356.101.13.2.1.1.5";    # Location of cluster member Net (kbps)
 my $oid_mem              = ".1.3.6.1.4.1.12356.101.13.2.1.1.4";    # Location of cluster member Mem (%)
 my $oid_ses              = ".1.3.6.1.4.1.12356.101.13.2.1.1.6";    # Location of cluster member Sessions (int)
+my $oid_sysversion       = ".1.3.6.1.4.1.12356.101.4.1.1.0";       # Location of Firmware version of the device (String)
 
 # Cluster
 my $oid_cluster_type     = ".1.3.6.1.4.1.12356.101.13.1.1.0";      # Location of Fortinet cluster type (String)
@@ -328,13 +332,19 @@ sub get_cluster_state {
   } # end scalar count
 
   if ( $return_state eq "OK" ) {
-    my %cluster_sync_state = %{get_snmp_table($session, $oid_cluster_sync_state)};
-    while (($oid, $value) = each (%cluster_sync_state)) {
-      if ( $value == 0 ) {
-         $sync_string = "Sync-State: " . $cluster_sync_states{$value};
-         $return_state = "CRITICAL";
-         last;
-      }
+    my $sysversion = get_snmp_value($session, $oid_sysversion);
+    my ($fversion) = (split /,/, $sysversion)[0];
+    if ( $fversion =~ /^v[0-4]\.[0-9]\.[0-9]{0,2}/ ) {
+        $sync_string = "Sync-State: Unavailable";
+    } else {
+        my %cluster_sync_state = %{get_snmp_table($session, $oid_cluster_sync_state)};
+        while (($oid, $value) = each (%cluster_sync_state)) {
+           if ( $value == 0 ) {
+            $sync_string = "Sync-State: " . $cluster_sync_states{$value};
+            $return_state = "CRITICAL";
+            last;
+           }
+        }
     }
   }
   # if preferred master serial is not master
